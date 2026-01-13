@@ -1,130 +1,602 @@
-name: AI Consensus Analysis
+#!/usr/bin/env python3
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    IRON CITY AI CONSENSUS ENGINE™ v4.0                        ║
+║                    15 Models | 9 Providers | Real Consensus                   ║
+║                    © Iron City IT Advisors                                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-# This is a REUSABLE WORKFLOW - other repos call this with `uses:`
-# Example: uses: IronCityIT/ICIT-ConsensusEngine/.github/workflows/analyze.yml@main
+This module queries 15 AI models across 9 providers to analyze security findings
+and return consensus-based severity ratings, remediation steps, and confidence scores.
 
-on:
-  workflow_call:
-    inputs:
-      findings_json:
-        description: 'JSON string of findings to analyze'
-        required: true
-        type: string
-      product:
-        description: 'Product name (attacksim-pro, threat-inspector, dns-guard, etc.)'
-        required: false
-        type: string
-        default: 'generic'
-      client_id:
-        description: 'Client ID for multi-tenant tracking'
-        required: false
-        type: string
-        default: 'default'
-    outputs:
-      consensus_severity:
-        description: 'Overall consensus severity rating'
-        value: ${{ jobs.analyze.outputs.consensus_severity }}
-      confidence_percent:
-        description: 'Confidence percentage'
-        value: ${{ jobs.analyze.outputs.confidence_percent }}
-      consensus_json:
-        description: 'Full consensus results as JSON'
-        value: ${{ jobs.analyze.outputs.consensus_json }}
-    secrets:
-      GROQ_API_KEY:
-        required: true
-      OPENROUTER_API_KEY:
-        required: true
-      GEMINI_API_KEY:
-        required: true
-
-  # Also allow manual testing via workflow_dispatch
-  workflow_dispatch:
-    inputs:
-      findings_json:
-        description: 'JSON string of findings to analyze'
-        required: true
-        type: string
-      product:
-        description: 'Product name'
-        required: false
-        type: string
-        default: 'test'
-      client_id:
-        description: 'Client ID'
-        required: false
-        type: string
-        default: 'test-client'
-
-jobs:
-  analyze:
-    name: AI Consensus Analysis
-    runs-on: ubuntu-latest
-    outputs:
-      consensus_severity: ${{ steps.analyze.outputs.consensus_severity }}
-      confidence_percent: ${{ steps.analyze.outputs.confidence_percent }}
-      consensus_json: ${{ steps.analyze.outputs.consensus_json }}
+MODEL ROSTER (v4.0 - January 2026):
+    GROQ (Direct API - FREE):
+        1. Llama 3.3 70B
+        2. Llama 3.1 8B
     
-    steps:
-      - name: Checkout Consensus Engine
-        uses: actions/checkout@v4
-        with:
-          repository: IronCityIT/ICIT-ConsensusEngine
-          ref: main
+    GOOGLE (Direct API - FREE tier):
+        3. Gemini 2.5 Flash
+    
+    OPENROUTER (7 providers):
+        4. Claude 3 Haiku (Anthropic) - Weight 1.5x
+        5. GPT-4o-mini (OpenAI) - Weight 1.3x
+        6. Gemini 3 Flash Preview (Google) - Weight 1.3x  [NEW]
+        7. Grok 4.1 Fast (xAI) - Weight 1.2x  [NEW]
+        8. Llama 3.1 70B (Meta)
+        9. Llama 4 Maverick (Meta) - Weight 1.1x  [NEW]
+        10. Mistral Large (Mistral)
+        11. GLM 4.7 (Z.AI) - Weight 1.1x  [NEW]
+        12. Gemma 2 27B (Google)
+        13. Qwen 2.5 72B (Alibaba)
+        14. DeepSeek V3 (DeepSeek)
+        15. MiniMax M2.1 (MiniMax) - Weight 0.9x  [NEW]
+"""
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+import os
+import sys
+import json
+import argparse
+import re
+from dataclasses import dataclass, field, asdict
+from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+import requests
 
-      - name: Install dependencies
-        run: |
-          pip install requests
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 
-      - name: Write findings to file
-        run: |
-          cat << 'FINDINGS_EOF' > /tmp/findings.json
-          ${{ inputs.findings_json }}
-          FINDINGS_EOF
-          echo "Findings to analyze:"
-          cat /tmp/findings.json | head -100
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-      - name: Run AI Consensus Engine
-        id: analyze
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: |
-          python src/consensus_engine.py \
-            /tmp/findings.json \
-            --product "${{ inputs.product }}" \
-            --client "${{ inputs.client_id }}" \
-            --output /tmp/consensus_result.json \
-            --pretty
-          
-          # Extract outputs
-          SEVERITY=$(jq -r '.consensus_severity // .[-1].consensus_severity // "UNKNOWN"' /tmp/consensus_result.json)
-          CONFIDENCE=$(jq -r '.confidence_percent // .[-1].confidence_percent // 0' /tmp/consensus_result.json)
-          
-          echo "consensus_severity=$SEVERITY" >> $GITHUB_OUTPUT
-          echo "confidence_percent=$CONFIDENCE" >> $GITHUB_OUTPUT
-          
-          # Store full JSON (escape for output)
-          FULL_JSON=$(cat /tmp/consensus_result.json | jq -c '.')
-          echo "consensus_json=$FULL_JSON" >> $GITHUB_OUTPUT
-          
-          echo ""
-          echo "============================================"
-          echo "  CONSENSUS RESULT"
-          echo "============================================"
-          echo "  Severity: $SEVERITY"
-          echo "  Confidence: $CONFIDENCE%"
-          echo "============================================"
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
-      - name: Upload consensus results
-        uses: actions/upload-artifact@v4
-        with:
-          name: consensus-results
-          path: /tmp/consensus_result.json
-          retention-days: 30
+# Model weights for consensus voting
+# Higher weight = more influence on final decision
+MODEL_WEIGHTS = {
+    # TOP TIER - Premium reasoning models (1.3x - 1.5x)
+    "claude-3-haiku": 1.5,       # Anthropic - best structured analysis
+    "gpt-4o-mini": 1.3,          # OpenAI - strong baseline
+    "gemini-3-flash": 1.3,       # Google - near-Pro reasoning, 1M context [NEW]
+    "grok-4.1-fast": 1.2,        # xAI - #1 reasoning traffic on OpenRouter [NEW]
+    
+    # MID TIER - Large models with solid reasoning (1.1x - 1.2x)
+    "llama-3.3-70b": 1.2,        # Groq - large Llama
+    "llama-3.1-70b": 1.2,        # OpenRouter - large Llama
+    "llama-4-maverick": 1.1,     # Meta - 17B active, 128 experts MoE [NEW]
+    "mistral-large": 1.1,        # Mistral
+    "glm-4.7": 1.1,              # Z.AI - enhanced multi-step reasoning [NEW]
+    "qwen-2.5-72b": 1.1,         # Alibaba - large Qwen
+    
+    # BUDGET TIER - Cost-effective models (0.7x - 1.0x)
+    "deepseek-v3": 1.0,          # DeepSeek
+    "gemini-flash": 1.0,         # Google direct API
+    "gemma-2-27b": 0.9,          # Google medium
+    "minimax-m2.1": 0.9,         # MiniMax - #3 programming, fast [NEW]
+    "llama-3.1-8b": 0.7,         # Groq - small model, lower weight
+}
+
+# Severity order for comparison
+SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
+
+@dataclass
+class ModelResponse:
+    """Response from a single AI model."""
+    model_name: str
+    provider: str
+    severity: str
+    confidence: float
+    remediation: list[str]
+    reasoning: str
+    weight: float
+    success: bool = True
+    error: Optional[str] = None
+
+
+@dataclass
+class ConsensusResult:
+    """Final consensus result from all models."""
+    consensus_severity: str
+    confidence_percent: float
+    total_models: int
+    successful_models: int
+    failed_models: int
+    severity_distribution: dict
+    weighted_scores: dict
+    aggregated_remediation: list[str]
+    compliance_mapping: dict
+    model_responses: list[dict]
+    engine_version: str = "4.0"
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+
+
+# =============================================================================
+# PROMPT TEMPLATE
+# =============================================================================
+
+ANALYSIS_PROMPT = """You are a senior cybersecurity analyst. Analyze this security finding and provide your assessment.
+
+FINDING:
+{finding_json}
+
+Respond in this EXACT JSON format only (no markdown, no explanation outside JSON):
+{{
+    "severity": "CRITICAL|HIGH|MEDIUM|LOW|INFO",
+    "confidence": 0.0-1.0,
+    "remediation": ["step 1", "step 2", "step 3"],
+    "reasoning": "Brief explanation of your severity rating"
+}}
+
+Consider:
+- Exploitability and attack complexity
+- Potential business impact
+- Data exposure risk
+- Compliance implications (NIST, PCI-DSS, HIPAA, SOC2)
+- Whether this is internet-facing or internal
+- CVSS score if provided
+
+Respond with JSON only."""
+
+
+# =============================================================================
+# API QUERY FUNCTIONS
+# =============================================================================
+
+def query_groq(model_id: str, model_name: str, prompt: str) -> ModelResponse:
+    """Query Groq API."""
+    if not GROQ_API_KEY:
+        return ModelResponse(
+            model_name=model_name, provider="Groq", severity="", confidence=0,
+            remediation=[], reasoning="", weight=MODEL_WEIGHTS.get(model_name, 1.0),
+            success=False, error="GROQ_API_KEY not set"
+        )
+    
+    try:
+        response = requests.post(
+            GROQ_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 1000
+            },
+            timeout=30
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        return parse_model_response(content, model_name, "Groq")
+    except Exception as e:
+        return ModelResponse(
+            model_name=model_name, provider="Groq", severity="", confidence=0,
+            remediation=[], reasoning="", weight=MODEL_WEIGHTS.get(model_name, 1.0),
+            success=False, error=str(e)
+        )
+
+
+def query_openrouter(model_id: str, model_name: str, prompt: str) -> ModelResponse:
+    """Query OpenRouter API."""
+    if not OPENROUTER_API_KEY:
+        return ModelResponse(
+            model_name=model_name, provider="OpenRouter", severity="", confidence=0,
+            remediation=[], reasoning="", weight=MODEL_WEIGHTS.get(model_name, 1.0),
+            success=False, error="OPENROUTER_API_KEY not set"
+        )
+    
+    try:
+        response = requests.post(
+            OPENROUTER_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://ironcityit.com",
+                "X-Title": "Iron City Consensus Engine"
+            },
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.1,
+                "max_tokens": 1000
+            },
+            timeout=60
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        return parse_model_response(content, model_name, "OpenRouter")
+    except Exception as e:
+        return ModelResponse(
+            model_name=model_name, provider="OpenRouter", severity="", confidence=0,
+            remediation=[], reasoning="", weight=MODEL_WEIGHTS.get(model_name, 1.0),
+            success=False, error=str(e)
+        )
+
+
+def query_gemini(prompt: str) -> ModelResponse:
+    """Query Google Gemini API."""
+    model_name = "gemini-flash"
+    if not GEMINI_API_KEY:
+        return ModelResponse(
+            model_name=model_name, provider="Google", severity="", confidence=0,
+            remediation=[], reasoning="", weight=MODEL_WEIGHTS.get(model_name, 1.0),
+            success=False, error="GEMINI_API_KEY not set"
+        )
+    
+    try:
+        response = requests.post(
+            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 1000
+                }
+            },
+            timeout=30
+        )
+        response.raise_for_status()
+        content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return parse_model_response(content, model_name, "Google")
+    except Exception as e:
+        return ModelResponse(
+            model_name=model_name, provider="Google", severity="", confidence=0,
+            remediation=[], reasoning="", weight=MODEL_WEIGHTS.get(model_name, 1.0),
+            success=False, error=str(e)
+        )
+
+
+def parse_model_response(content: str, model_name: str, provider: str) -> ModelResponse:
+    """Parse JSON response from model."""
+    weight = MODEL_WEIGHTS.get(model_name, 1.0)
+    
+    try:
+        # Clean up response - extract JSON from markdown if needed
+        content = content.strip()
+        if content.startswith("```"):
+            content = re.sub(r"```json?\s*", "", content)
+            content = re.sub(r"```\s*$", "", content)
+        
+        # Find JSON object
+        match = re.search(r'\{[\s\S]*\}', content)
+        if not match:
+            raise ValueError("No JSON object found in response")
+        
+        data = json.loads(match.group())
+        
+        severity = data.get("severity", "MEDIUM").upper()
+        if severity not in SEVERITY_ORDER:
+            severity = "MEDIUM"
+        
+        return ModelResponse(
+            model_name=model_name,
+            provider=provider,
+            severity=severity,
+            confidence=float(data.get("confidence", 0.8)),
+            remediation=data.get("remediation", []),
+            reasoning=data.get("reasoning", ""),
+            weight=weight,
+            success=True
+        )
+    except Exception as e:
+        return ModelResponse(
+            model_name=model_name, provider=provider, severity="", confidence=0,
+            remediation=[], reasoning="", weight=weight,
+            success=False, error=f"Parse error: {str(e)}"
+        )
+
+
+# =============================================================================
+# CONSENSUS CALCULATION
+# =============================================================================
+
+def calculate_consensus(responses: list[ModelResponse]) -> ConsensusResult:
+    """Calculate weighted consensus from all model responses."""
+    
+    successful = [r for r in responses if r.success]
+    failed = [r for r in responses if not r.success]
+    
+    if not successful:
+        return ConsensusResult(
+            consensus_severity="UNKNOWN",
+            confidence_percent=0,
+            total_models=len(responses),
+            successful_models=0,
+            failed_models=len(failed),
+            severity_distribution={},
+            weighted_scores={},
+            aggregated_remediation=[],
+            compliance_mapping={},
+            model_responses=[asdict(r) for r in responses]
+        )
+    
+    # Calculate weighted severity scores
+    severity_weights = {s: 0.0 for s in SEVERITY_ORDER}
+    total_weight = 0.0
+    
+    for r in successful:
+        if r.severity in severity_weights:
+            severity_weights[r.severity] += r.weight * r.confidence
+            total_weight += r.weight
+    
+    # Normalize weights
+    if total_weight > 0:
+        for s in severity_weights:
+            severity_weights[s] /= total_weight
+    
+    # Find consensus severity (highest weighted)
+    consensus_severity = max(severity_weights, key=severity_weights.get)
+    
+    # Calculate confidence as percentage of agreement
+    agreement_count = sum(1 for r in successful if r.severity == consensus_severity)
+    base_confidence = (agreement_count / len(successful)) * 100
+    
+    # Boost confidence based on weighted agreement
+    weighted_agreement = severity_weights[consensus_severity] * 100
+    confidence_percent = round((base_confidence + weighted_agreement) / 2, 1)
+    
+    # Severity distribution
+    severity_distribution = {}
+    for r in successful:
+        severity_distribution[r.severity] = severity_distribution.get(r.severity, 0) + 1
+    
+    # Aggregate remediation steps (deduplicated)
+    seen_remediation = set()
+    aggregated_remediation = []
+    for r in successful:
+        for step in r.remediation:
+            normalized = step.lower().strip()
+            if normalized not in seen_remediation and len(step) > 10:
+                seen_remediation.add(normalized)
+                aggregated_remediation.append(step)
+    
+    # Compliance mapping based on severity
+    compliance_mapping = get_compliance_mapping(consensus_severity)
+    
+    return ConsensusResult(
+        consensus_severity=consensus_severity,
+        confidence_percent=confidence_percent,
+        total_models=len(responses),
+        successful_models=len(successful),
+        failed_models=len(failed),
+        severity_distribution=severity_distribution,
+        weighted_scores={k: round(v * 100, 1) for k, v in severity_weights.items()},
+        aggregated_remediation=aggregated_remediation[:10],  # Top 10
+        compliance_mapping=compliance_mapping,
+        model_responses=[asdict(r) for r in responses]
+    )
+
+
+def get_compliance_mapping(severity: str) -> dict:
+    """Map severity to compliance framework controls."""
+    mappings = {
+        "CRITICAL": {
+            "NIST": ["SI-2", "SI-3", "SC-7", "AC-6", "IR-4"],
+            "CIS": ["4.1", "5.1", "9.4", "16.1", "17.1"],
+            "PCI-DSS": ["6.1", "6.2", "11.2", "11.3"],
+            "HIPAA": ["164.308(a)(1)", "164.312(a)(1)", "164.308(a)(6)"],
+            "SOC2": ["CC6.1", "CC7.1", "CC7.2", "CC7.3"]
+        },
+        "HIGH": {
+            "NIST": ["SI-2", "CM-6", "AC-3", "AU-6"],
+            "CIS": ["4.1", "5.2", "9.1", "12.1"],
+            "PCI-DSS": ["6.1", "6.5", "11.2"],
+            "HIPAA": ["164.308(a)(5)", "164.312(b)"],
+            "SOC2": ["CC6.1", "CC7.1"]
+        },
+        "MEDIUM": {
+            "NIST": ["CM-6", "AC-3", "AU-6"],
+            "CIS": ["4.2", "5.3", "8.1"],
+            "PCI-DSS": ["6.5", "10.6"],
+            "HIPAA": ["164.312(b)"],
+            "SOC2": ["CC6.1"]
+        },
+        "LOW": {
+            "NIST": ["CM-6", "AU-6"],
+            "CIS": ["4.3", "8.2"],
+            "PCI-DSS": ["6.5"],
+            "HIPAA": [],
+            "SOC2": []
+        },
+        "INFO": {
+            "NIST": ["AU-6"],
+            "CIS": ["8.3"],
+            "PCI-DSS": [],
+            "HIPAA": [],
+            "SOC2": []
+        }
+    }
+    return mappings.get(severity, {})
+
+
+# =============================================================================
+# MAIN ENGINE
+# =============================================================================
+
+def analyze_finding(finding: dict, product: str = "generic", client_id: str = "default") -> ConsensusResult:
+    """
+    Main entry point: Analyze a security finding using 15 AI models.
+    
+    Args:
+        finding: Security finding as dictionary
+        product: Product name (attacksim-pro, threat-inspector, etc.)
+        client_id: Client identifier for multi-tenant tracking
+    
+    Returns:
+        ConsensusResult with consensus severity, confidence, and remediation
+    """
+    
+    prompt = ANALYSIS_PROMPT.format(finding_json=json.dumps(finding, indent=2))
+    
+    # Define all 15 models to query
+    models = [
+        # ===========================================
+        # GROQ (Direct API - FREE)
+        # ===========================================
+        ("groq", "llama-3.3-70b-versatile", "llama-3.3-70b"),
+        ("groq", "llama-3.1-8b-instant", "llama-3.1-8b"),
+        
+        # ===========================================
+        # GOOGLE GEMINI (Direct API - FREE tier)
+        # ===========================================
+        ("gemini", None, "gemini-flash"),
+        
+        # ===========================================
+        # OPENROUTER - Top Tier (Premium Reasoning)
+        # ===========================================
+        ("openrouter", "anthropic/claude-3-haiku", "claude-3-haiku"),
+        ("openrouter", "openai/gpt-4o-mini", "gpt-4o-mini"),
+        ("openrouter", "google/gemini-3-flash-preview", "gemini-3-flash"),      # NEW v4.0
+        ("openrouter", "x-ai/grok-4.1-fast", "grok-4.1-fast"),                   # NEW v4.0
+        
+        # ===========================================
+        # OPENROUTER - Mid Tier (Large Models)
+        # ===========================================
+        ("openrouter", "meta-llama/llama-3.1-70b-instruct", "llama-3.1-70b"),
+        ("openrouter", "meta-llama/llama-4-maverick", "llama-4-maverick"),       # NEW v4.0
+        ("openrouter", "mistralai/mistral-large", "mistral-large"),
+        ("openrouter", "z-ai/glm-4.7", "glm-4.7"),                               # NEW v4.0
+        ("openrouter", "qwen/qwen-2.5-72b-instruct", "qwen-2.5-72b"),
+        
+        # ===========================================
+        # OPENROUTER - Budget Tier (Cost-Effective)
+        # ===========================================
+        ("openrouter", "google/gemma-2-27b-it", "gemma-2-27b"),
+        ("openrouter", "deepseek/deepseek-chat", "deepseek-v3"),
+        ("openrouter", "minimax/minimax-m2.1", "minimax-m2.1"),                  # NEW v4.0
+    ]
+    
+    responses = []
+    
+    # Query all models in parallel
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {}
+        
+        for provider, model_id, model_name in models:
+            if provider == "groq":
+                futures[executor.submit(query_groq, model_id, model_name, prompt)] = model_name
+            elif provider == "gemini":
+                futures[executor.submit(query_gemini, prompt)] = model_name
+            elif provider == "openrouter":
+                futures[executor.submit(query_openrouter, model_id, model_name, prompt)] = model_name
+        
+        for future in as_completed(futures):
+            model_name = futures[future]
+            try:
+                response = future.result()
+                responses.append(response)
+                status = "✓" if response.success else f"✗ {response.error}"
+                print(f"  [{model_name}] {status}", file=sys.stderr)
+            except Exception as e:
+                print(f"  [{model_name}] ✗ Exception: {e}", file=sys.stderr)
+                responses.append(ModelResponse(
+                    model_name=model_name, provider="unknown", severity="", confidence=0,
+                    remediation=[], reasoning="", weight=1.0, success=False, error=str(e)
+                ))
+    
+    return calculate_consensus(responses)
+
+
+def analyze_findings_batch(findings: list[dict], product: str = "generic", client_id: str = "default") -> list[ConsensusResult]:
+    """Analyze multiple findings."""
+    results = []
+    for i, finding in enumerate(findings):
+        print(f"\n[Finding {i+1}/{len(findings)}]", file=sys.stderr)
+        results.append(analyze_finding(finding, product, client_id))
+    return results
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Iron City AI Consensus Engine v4.0 - Analyze security findings with 15 AI models"
+    )
+    parser.add_argument(
+        "findings_json",
+        help="JSON file containing findings array OR single finding object"
+    )
+    parser.add_argument(
+        "--product", "-p",
+        default="generic",
+        help="Product name (attacksim-pro, threat-inspector, dns-guard, shadowscan, ironsight)"
+    )
+    parser.add_argument(
+        "--client", "-c",
+        default="default",
+        help="Client ID for multi-tenant tracking"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        help="Output file for results JSON (default: stdout)"
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty print JSON output"
+    )
+    
+    args = parser.parse_args()
+    
+    # Load findings
+    if args.findings_json == "-":
+        findings_data = json.load(sys.stdin)
+    else:
+        with open(args.findings_json, "r") as f:
+            findings_data = json.load(f)
+    
+    # Normalize to list
+    if isinstance(findings_data, dict):
+        findings = [findings_data]
+    else:
+        findings = findings_data
+    
+    print(f"\n{'='*60}", file=sys.stderr)
+    print("  IRON CITY AI CONSENSUS ENGINE™ v4.0", file=sys.stderr)
+    print("  15 Models | 9 Providers | Weighted Consensus", file=sys.stderr)
+    print(f"  Product: {args.product} | Client: {args.client}", file=sys.stderr)
+    print(f"  Analyzing {len(findings)} finding(s)", file=sys.stderr)
+    print(f"{'='*60}", file=sys.stderr)
+    
+    # Analyze
+    results = analyze_findings_batch(findings, args.product, args.client)
+    
+    # Output
+    output_data = [asdict(r) for r in results]
+    if len(output_data) == 1:
+        output_data = output_data[0]
+    
+    indent = 2 if args.pretty else None
+    json_output = json.dumps(output_data, indent=indent)
+    
+    if args.output:
+        with open(args.output, "w") as f:
+            f.write(json_output)
+        print(f"\nResults written to: {args.output}", file=sys.stderr)
+    else:
+        print(json_output)
+    
+    # Summary
+    if results:
+        r = results[0] if len(results) == 1 else results
+        if isinstance(r, ConsensusResult):
+            print(f"\n{'='*60}", file=sys.stderr)
+            print(f"  CONSENSUS: {r.consensus_severity} ({r.confidence_percent}% confidence)", file=sys.stderr)
+            print(f"  Models: {r.successful_models}/{r.total_models} responded", file=sys.stderr)
+            print(f"{'='*60}\n", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
