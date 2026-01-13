@@ -1,0 +1,130 @@
+name: AI Consensus Analysis
+
+# This is a REUSABLE WORKFLOW - other repos call this with `uses:`
+# Example: uses: IronCityIT/ICIT-ConsensusEngine/.github/workflows/analyze.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      findings_json:
+        description: 'JSON string of findings to analyze'
+        required: true
+        type: string
+      product:
+        description: 'Product name (attacksim-pro, threat-inspector, dns-guard, etc.)'
+        required: false
+        type: string
+        default: 'generic'
+      client_id:
+        description: 'Client ID for multi-tenant tracking'
+        required: false
+        type: string
+        default: 'default'
+    outputs:
+      consensus_severity:
+        description: 'Overall consensus severity rating'
+        value: ${{ jobs.analyze.outputs.consensus_severity }}
+      confidence_percent:
+        description: 'Confidence percentage'
+        value: ${{ jobs.analyze.outputs.confidence_percent }}
+      consensus_json:
+        description: 'Full consensus results as JSON'
+        value: ${{ jobs.analyze.outputs.consensus_json }}
+    secrets:
+      GROQ_API_KEY:
+        required: true
+      OPENROUTER_API_KEY:
+        required: true
+      GEMINI_API_KEY:
+        required: true
+
+  # Also allow manual testing via workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      findings_json:
+        description: 'JSON string of findings to analyze'
+        required: true
+        type: string
+      product:
+        description: 'Product name'
+        required: false
+        type: string
+        default: 'test'
+      client_id:
+        description: 'Client ID'
+        required: false
+        type: string
+        default: 'test-client'
+
+jobs:
+  analyze:
+    name: AI Consensus Analysis
+    runs-on: ubuntu-latest
+    outputs:
+      consensus_severity: ${{ steps.analyze.outputs.consensus_severity }}
+      confidence_percent: ${{ steps.analyze.outputs.confidence_percent }}
+      consensus_json: ${{ steps.analyze.outputs.consensus_json }}
+    
+    steps:
+      - name: Checkout Consensus Engine
+        uses: actions/checkout@v4
+        with:
+          repository: IronCityIT/ICIT-ConsensusEngine
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Write findings to file
+        run: |
+          cat << 'FINDINGS_EOF' > /tmp/findings.json
+          ${{ inputs.findings_json }}
+          FINDINGS_EOF
+          echo "Findings to analyze:"
+          cat /tmp/findings.json | head -100
+
+      - name: Run AI Consensus Engine
+        id: analyze
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python src/consensus_engine.py \
+            /tmp/findings.json \
+            --product "${{ inputs.product }}" \
+            --client "${{ inputs.client_id }}" \
+            --output /tmp/consensus_result.json \
+            --pretty
+          
+          # Extract outputs
+          SEVERITY=$(jq -r '.consensus_severity // .[-1].consensus_severity // "UNKNOWN"' /tmp/consensus_result.json)
+          CONFIDENCE=$(jq -r '.confidence_percent // .[-1].confidence_percent // 0' /tmp/consensus_result.json)
+          
+          echo "consensus_severity=$SEVERITY" >> $GITHUB_OUTPUT
+          echo "confidence_percent=$CONFIDENCE" >> $GITHUB_OUTPUT
+          
+          # Store full JSON (escape for output)
+          FULL_JSON=$(cat /tmp/consensus_result.json | jq -c '.')
+          echo "consensus_json=$FULL_JSON" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "============================================"
+          echo "  CONSENSUS RESULT"
+          echo "============================================"
+          echo "  Severity: $SEVERITY"
+          echo "  Confidence: $CONFIDENCE%"
+          echo "============================================"
+
+      - name: Upload consensus results
+        uses: actions/upload-artifact@v4
+        with:
+          name: consensus-results
+          path: /tmp/consensus_result.json
+          retention-days: 30
