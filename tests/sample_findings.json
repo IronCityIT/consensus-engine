@@ -1,0 +1,38 @@
+[
+  {
+    "title": "SQL Injection Vulnerability",
+    "severity": "HIGH",
+    "description": "The application is vulnerable to SQL injection attacks via the 'id' parameter. An attacker could extract sensitive data from the database or modify data.",
+    "url": "https://example.com/api/users?id=1",
+    "evidence": "Error: You have an error in your SQL syntax near '1' OR '1'='1'",
+    "cwe": "CWE-89",
+    "cvss": 8.6,
+    "scanner": "nuclei",
+    "references": [
+      "https://owasp.org/www-community/attacks/SQL_Injection"
+    ]
+  },
+  {
+    "title": "Open Ports - SSH and RDP Exposed",
+    "severity": "HIGH",
+    "description": "SSH (22) and RDP (3389) ports are exposed to the internet without IP restrictions",
+    "target": "203.0.113.50",
+    "ports": [22, 3389],
+    "scanner": "nmap"
+  },
+  {
+    "title": "Missing Content-Security-Policy Header",
+    "severity": "MEDIUM",
+    "description": "The Content-Security-Policy header is not set, which could allow XSS attacks",
+    "url": "https://example.com",
+    "scanner": "zap"
+  },
+  {
+    "title": "Credentials Found on Dark Web",
+    "severity": "CRITICAL",
+    "description": "Employee credentials were found in a recent data breach dump",
+    "email": "admin@example.com",
+    "source": "breach-2024-q4",
+    "scanner": "shadowscan"
+  }
+]

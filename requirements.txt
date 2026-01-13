@@ -1,0 +1,4 @@
+# Iron City AI Consensus Engine Dependencies
+# Python 3.9+
+
+requests>=2.28.0

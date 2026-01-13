@@ -1,0 +1,121 @@
+# =============================================================================
+# EXAMPLE: How AttackSim Pro calls the AI Consensus Engine
+# =============================================================================
+# Add this to your product's workflow to get AI-powered consensus analysis
+# of security findings.
+#
+# File: IronCityIT/ICIT-AttackSimPro/.github/workflows/scan.yml (partial)
+# =============================================================================
+
+name: AttackSim Pro Scan with AI Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target URL to scan'
+        required: true
+        type: string
+      client_id:
+        description: 'Client ID'
+        required: true
+        type: string
+      scan_type:
+        description: 'Scan type (quick/standard/comprehensive)'
+        required: false
+        type: string
+        default: 'standard'
+
+jobs:
+  # =========================================================================
+  # JOB 1: Run the security scan (ZAP, Nuclei, etc.)
+  # =========================================================================
+  scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    outputs:
+      findings_json: ${{ steps.collect.outputs.findings_json }}
+      finding_count: ${{ steps.collect.outputs.finding_count }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ... your existing scan steps ...
+      # This is where you'd run ZAP, Nuclei, Nmap, etc.
+
+      - name: Collect findings
+        id: collect
+        run: |
+          # Example: Collect findings from your scanners
+          # In reality, you'd parse ZAP/Nuclei output here
+          
+          cat << 'EOF' > /tmp/findings.json
+          [
+            {
+              "title": "SQL Injection in Login Form",
+              "severity": "HIGH",
+              "description": "The login form is vulnerable to SQL injection attacks",
+              "url": "${{ inputs.target_url }}/login",
+              "evidence": "Error: You have an error in your SQL syntax",
+              "cwe": "CWE-89",
+              "scanner": "nuclei"
+            },
+            {
+              "title": "Missing Security Headers",
+              "severity": "MEDIUM", 
+              "description": "X-Frame-Options and CSP headers are missing",
+              "url": "${{ inputs.target_url }}",
+              "scanner": "zap"
+            }
+          ]
+          EOF
+          
+          # Output findings for next job
+          FINDINGS=$(cat /tmp/findings.json | jq -c '.')
+          echo "findings_json=$FINDINGS" >> $GITHUB_OUTPUT
+          echo "finding_count=$(echo $FINDINGS | jq 'length')" >> $GITHUB_OUTPUT
+
+  # =========================================================================
+  # JOB 2: AI Consensus Analysis
+  # =========================================================================
+  consensus:
+    name: AI Consensus Analysis
+    needs: scan
+    if: needs.scan.outputs.finding_count > 0
+    
+    # THIS IS THE KEY PART - call the reusable workflow
+    uses: IronCityIT/ICIT-ConsensusEngine/.github/workflows/analyze.yml@main
+    with:
+      findings_json: ${{ needs.scan.outputs.findings_json }}
+      product: 'attacksim-pro'
+      client_id: ${{ inputs.client_id }}
+    secrets:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  # =========================================================================
+  # JOB 3: Generate Report with AI-enhanced analysis
+  # =========================================================================
+  report:
+    name: Generate Report
+    needs: [scan, consensus]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Use consensus results
+        run: |
+          echo "============================================"
+          echo "  AI CONSENSUS RESULTS"
+          echo "============================================"
+          echo "  Overall Severity: ${{ needs.consensus.outputs.consensus_severity }}"
+          echo "  Confidence: ${{ needs.consensus.outputs.confidence_percent }}%"
+          echo "============================================"
+          
+          # Access full JSON if needed
+          FULL_RESULTS='${{ needs.consensus.outputs.consensus_json }}'
+          echo "$FULL_RESULTS" | jq '.aggregated_remediation'
+
+      # ... your report generation steps ...
+      # Use the consensus severity for risk scoring, etc.

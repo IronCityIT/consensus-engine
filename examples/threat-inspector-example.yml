@@ -1,0 +1,87 @@
+# =============================================================================
+# EXAMPLE: How Threat Inspector calls the AI Consensus Engine
+# =============================================================================
+# File: IronCityIT/threat-inspector/.github/workflows/scan.yml (partial)
+# =============================================================================
+
+name: Threat Inspector Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target IP or domain'
+        required: true
+        type: string
+      client_id:
+        description: 'Client ID'
+        required: true
+        type: string
+
+jobs:
+  scan:
+    name: Network Scan
+    runs-on: ubuntu-latest
+    outputs:
+      findings_json: ${{ steps.collect.outputs.findings_json }}
+    
+    steps:
+      - name: Run Nmap scan
+        run: |
+          # Your Nmap scanning logic
+          nmap -sV -sC -oX /tmp/nmap.xml ${{ inputs.target }} || true
+
+      - name: Run SSL analysis
+        run: |
+          # Your SSL/TLS analysis
+          echo "SSL analysis here"
+
+      - name: Collect findings
+        id: collect
+        run: |
+          # Parse Nmap/SSL results into findings JSON
+          cat << 'EOF' > /tmp/findings.json
+          [
+            {
+              "title": "Open SSH Port with Weak Ciphers",
+              "severity": "HIGH",
+              "port": 22,
+              "service": "OpenSSH 7.4",
+              "description": "SSH server supports weak CBC ciphers",
+              "target": "${{ inputs.target }}",
+              "scanner": "nmap"
+            },
+            {
+              "title": "SSL Certificate Expiring Soon",
+              "severity": "MEDIUM",
+              "port": 443,
+              "description": "SSL certificate expires in 15 days",
+              "target": "${{ inputs.target }}",
+              "scanner": "ssl-analyzer"
+            }
+          ]
+          EOF
+          
+          echo "findings_json=$(cat /tmp/findings.json | jq -c '.')" >> $GITHUB_OUTPUT
+
+  # Call AI Consensus Engine
+  consensus:
+    needs: scan
+    uses: IronCityIT/ICIT-ConsensusEngine/.github/workflows/analyze.yml@main
+    with:
+      findings_json: ${{ needs.scan.outputs.findings_json }}
+      product: 'threat-inspector'
+      client_id: ${{ inputs.client_id }}
+    secrets:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  report:
+    needs: [scan, consensus]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Display consensus
+        run: |
+          echo "Consensus Severity: ${{ needs.consensus.outputs.consensus_severity }}"
+          echo "Confidence: ${{ needs.consensus.outputs.confidence_percent }}%"
