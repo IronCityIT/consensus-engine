@@ -4,11 +4,11 @@ on:
   workflow_call:
     inputs:
       findings_json:
-        description: 'JSON string of findings to analyze'
+        description: 'Base64 encoded JSON string of findings'
         required: true
         type: string
       product:
-        description: 'Product name (dns-guard, threat-inspector, attacksim-pro)'
+        description: 'Product name'
         required: false
         type: string
         default: 'generic'
@@ -19,7 +19,7 @@ on:
         default: 'default'
     outputs:
       consensus_result:
-        description: 'AI consensus analysis result'
+        description: 'AI consensus result (base64 encoded)'
         value: ${{ jobs.analyze.outputs.result }}
     secrets:
       GROQ_API_KEY:
@@ -52,8 +52,8 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          echo '${{ inputs.findings_json }}' > /tmp/findings.json
-          RESULT=$(python src/consensus_engine.py /tmp/findings.json -p "${{ inputs.product }}" -c "${{ inputs.client_id }}")
-          echo "result<<EOF" >> $GITHUB_OUTPUT
-          echo "$RESULT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "${{ inputs.findings_json }}" | base64 -d > /tmp/findings.json
+          cat /tmp/findings.json
+          python src/consensus_engine.py /tmp/findings.json -p "${{ inputs.product }}" -c "${{ inputs.client_id }}" -o /tmp/result.json
+          RESULT=$(cat /tmp/result.json | base64 -w0)
+          echo "result=$RESULT" >> $GITHUB_OUTPUT
