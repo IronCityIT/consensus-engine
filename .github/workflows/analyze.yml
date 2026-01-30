@@ -15,9 +15,14 @@ on:
         description: 'Client ID'
         type: string
         default: 'default'
-    outputs:
-      consensus_result:
-        value: ${{ jobs.analyze.outputs.result }}
+      scan_id:
+        description: 'Scan ID to update in Firestore'
+        type: string
+        default: ''
+      firestore_url:
+        description: 'Cloud Function URL to post results'
+        type: string
+        default: ''
     secrets:
       GROQ_API_KEY:
         required: true
@@ -29,8 +34,6 @@ on:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    outputs:
-      result: ${{ steps.consensus.outputs.result }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,7 +46,6 @@ jobs:
       - run: pip install requests
 
       - name: Run Consensus Engine
-        id: consensus
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -51,6 +53,14 @@ jobs:
         run: |
           echo "${{ inputs.findings_json }}" | base64 -d > /tmp/findings.json
           cat /tmp/findings.json
-          python src/consensus_engine.py /tmp/findings.json -p "${{ inputs.product }}" -c "${{ inputs.client_id }}" -o /tmp/result.json
-          RESULT=$(cat /tmp/result.json | base64 -w0)
-          echo "result=$RESULT" >> $GITHUB_OUTPUT
+          python src/consensus_engine.py /tmp/findings.json -p "${{ inputs.product }}" -c "${{ inputs.client_id }}" -o /tmp/result.json --pretty
+          echo "=== CONSENSUS RESULT ==="
+          cat /tmp/result.json
+
+      - name: Post to Firestore
+        if: inputs.firestore_url != '' && inputs.scan_id != ''
+        run: |
+          # Update existing scan with AI consensus
+          curl -s -X POST "${{ inputs.firestore_url }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"update_scan_id\": \"${{ inputs.scan_id }}\", \"ai_consensus\": $(cat /tmp/result.json)}"
