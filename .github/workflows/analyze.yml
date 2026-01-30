@@ -4,22 +4,19 @@ on:
   workflow_call:
     inputs:
       findings_json:
-        description: 'Base64 encoded JSON string of findings'
+        description: 'Base64 encoded JSON'
         required: true
         type: string
       product:
         description: 'Product name'
-        required: false
         type: string
         default: 'generic'
       client_id:
-        description: 'Client identifier'
-        required: false
+        description: 'Client ID'
         type: string
         default: 'default'
     outputs:
       consensus_result:
-        description: 'AI consensus result (base64 encoded)'
         value: ${{ jobs.analyze.outputs.result }}
     secrets:
       GROQ_API_KEY:
