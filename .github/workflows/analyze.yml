@@ -36,14 +36,15 @@ jobs:
       result: ${{ steps.consensus.outputs.result }}
     steps:
       - uses: actions/checkout@v4
-      
+        with:
+          repository: IronCityIT/consensus-engine
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-      
+
       - run: pip install requests
-      
+
       - name: Run Consensus Engine
         id: consensus
         env:
