@@ -69,7 +69,7 @@ MODEL_WEIGHTS = {
     "gemini-2-flash": 1.3,
     "grok-2": 1.2,
     # MID TIER (1.1-1.2)
-    "llama-3.3-70b": 1.2,
+    "gpt-oss-120b": 1.2,
     "llama-3.1-70b": 1.2,
     "llama-3.3-70b-or": 1.1,
     "mistral-large": 1.1,
@@ -80,7 +80,7 @@ MODEL_WEIGHTS = {
     "gemma-2-27b": 0.9,
     "phi-3-medium": 0.9,
     "command-r": 0.9,
-    "llama-3.1-8b": 0.7,
+    "gpt-oss-20b": 0.7,
 }
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
@@ -658,8 +658,8 @@ def analyze_finding(finding: dict, product: str = "generic", client_id: str = "d
         # ===========================================
         # GROQ (Direct API - FREE) - 2 models
         # ===========================================
-        ("groq", "llama-3.3-70b-versatile", "llama-3.3-70b"),
-        ("groq", "llama-3.1-8b-instant", "llama-3.1-8b"),
+        ("groq", "openai/gpt-oss-120b", "gpt-oss-120b"),
+        ("groq", "openai/gpt-oss-20b", "gpt-oss-20b"),
         
         # ===========================================
         # GOOGLE GEMINI (Direct API - FREE tier) - 1 model
@@ -671,8 +671,8 @@ def analyze_finding(finding: dict, product: str = "generic", client_id: str = "d
         # ===========================================
         ("openrouter", "anthropic/claude-3-haiku", "claude-3-haiku"),
         ("openrouter", "openai/gpt-4o-mini", "gpt-4o-mini"),
-        ("openrouter", "google/gemini-2.0-flash-exp:free", "gemini-2-flash"),
-        ("openrouter", "x-ai/grok-2-1212", "grok-2"),
+        ("openrouter", "google/gemini-2.5-flash", "gemini-2-flash"),
+        ("openrouter", "x-ai/grok-4.5", "grok-2"),
         
         # ===========================================
         # OPENROUTER - Mid Tier (4 models)
@@ -687,8 +687,8 @@ def analyze_finding(finding: dict, product: str = "generic", client_id: str = "d
         # ===========================================
         ("openrouter", "deepseek/deepseek-chat", "deepseek-v3"),
         ("openrouter", "google/gemma-2-27b-it", "gemma-2-27b"),
-        ("openrouter", "microsoft/phi-3-medium-128k-instruct", "phi-3-medium"),
-        ("openrouter", "cohere/command-r", "command-r"),
+        ("openrouter", "microsoft/phi-4", "phi-3-medium"),
+        ("openrouter", "cohere/command-r-08-2024", "command-r"),
     ]
     
     responses = []

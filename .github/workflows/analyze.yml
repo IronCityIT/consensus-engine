@@ -1,12 +1,28 @@
 name: AI Consensus Analysis
 
+# ============================================================
+# The single source of truth for AI analysis across every ICIT product.
+# Products call this via `workflow_call` and never duplicate LLM logic.
+#
+# Result delivery is the caller's choice:
+#   consensus_b64 output  -> caller stores it (e.g. storeScanResults -> Firestore)
+#   post_to_api: true     -> engine POSTs it to the ingest API itself (legacy path)
+# Callers handling regulated scan data leave scan_id empty (or set
+# post_to_api:false) and store the output themselves, so findings never leave
+# the Firestore path.
+#
+# workflow_dispatch is a self-test: it runs the bundled sample findings so the
+# engine can be smoke-tested on its own repo without a product scan.
+# ============================================================
+
 on:
   workflow_call:
     inputs:
       findings_json:
         description: 'Base64 encoded JSON findings'
-        required: true
+        required: false
         type: string
+        default: ''
       product:
         description: 'Product name'
         type: string
@@ -20,22 +36,71 @@ on:
         type: string
         default: ''
       api_url:
-        description: 'QNAP API URL'
+        description: 'Ingest API URL (only used when post_to_api is true)'
         type: string
         default: 'https://api.ironcityit.com/ingest'
+      post_to_api:
+        description: >-
+          POST the consensus result to the ingest API. Default true preserves
+          existing caller behaviour. Set false when the caller stores the
+          result itself and the data must not leave the Firestore path.
+        type: boolean
+        default: true
+    outputs:
+      consensus_b64:
+        description: 'Base64-encoded consensus result JSON (empty if analysis failed)'
+        value: ${{ jobs.analyze.outputs.consensus_b64 }}
     secrets:
+      # Optional on purpose. A missing key degrades AI enrichment (that provider
+      # is skipped and reported as an errored model); it does not fail the
+      # calling product's scan at the secrets gate.
       GROQ_API_KEY:
-        required: true
+        required: false
       OPENROUTER_API_KEY:
-        required: true
+        required: false
       GEMINI_API_KEY:
-        required: true
+        required: false
       IRONCITY_API_KEY:
-        required: true
+        required: false
+
+  workflow_dispatch:
+    inputs:
+      findings_json:
+        description: 'Base64 encoded JSON findings (blank = bundled sample)'
+        required: false
+        type: string
+        default: ''
+      product:
+        description: 'Product name'
+        type: string
+        default: 'self-test'
+      client_id:
+        description: 'Client ID'
+        type: string
+        default: 'ironcity'
+      scan_id:
+        description: 'Scan ID to update (blank = do not post)'
+        type: string
+        default: ''
+      api_url:
+        description: 'Ingest API URL (only used when post_to_api is true)'
+        type: string
+        default: 'https://api.ironcityit.com/ingest'
+      post_to_api:
+        description: 'POST the consensus result to the ingest API'
+        type: boolean
+        default: false
 
 jobs:
   analyze:
+    name: AI Consensus Analysis
     runs-on: ubuntu-latest
+    # Least privilege: the reusable engine reads its own repo and posts results
+    # onward; it needs no write access to the calling repo.
+    permissions:
+      contents: read
+    outputs:
+      consensus_b64: ${{ steps.consensus.outputs.consensus_b64 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,35 +110,100 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install requests
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          pip install --quiet requests
 
+      # Caller-supplied values reach the engine through env, never interpolated
+      # into the script body. findings_json is base64; product/client_id are
+      # passed as argv, so a value with shell metacharacters cannot execute.
       - name: Run Consensus Engine
         id: consensus
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FINDINGS_B64: ${{ inputs.findings_json }}
+          PRODUCT: ${{ inputs.product }}
+          CLIENT_ID: ${{ inputs.client_id }}
         run: |
-          echo "${{ inputs.findings_json }}" | base64 -d > /tmp/findings.json
+          set -euo pipefail
+          if [ -z "${FINDINGS_B64:-}" ]; then
+            # Self-test path: no caller payload, analyse the bundled sample.
+            echo "No findings_json supplied — using bundled tests/sample_findings.json"
+            cp tests/sample_findings.json /tmp/findings.json
+          else
+            # A malformed base64 payload is a caller error, not an engine crash —
+            # fail with a clear message instead of feeding garbage to the parser.
+            if ! printf '%s' "$FINDINGS_B64" | base64 -d > /tmp/findings.json 2>/dev/null; then
+              echo "::error::findings_json is not valid base64"
+              exit 1
+            fi
+          fi
+          if ! python3 -m json.tool /tmp/findings.json > /dev/null 2>&1; then
+            echo "::error::decoded findings_json is not valid JSON"
+            exit 1
+          fi
           python src/consensus_engine.py /tmp/findings.json \
-            -p "${{ inputs.product }}" \
-            -c "${{ inputs.client_id }}" \
+            -p "$PRODUCT" \
+            -c "$CLIENT_ID" \
             -o /tmp/result.json --pretty
+          # The engine must produce parseable output for the downstream update.
+          if ! python3 -m json.tool /tmp/result.json > /dev/null 2>&1; then
+            echo "::error::consensus engine did not produce valid result JSON"
+            exit 1
+          fi
           echo "=== AI CONSENSUS RESULT ==="
           cat /tmp/result.json
+          # Handed back to the caller so it can store the result on its own
+          # path. This is what makes the Firestore route a real option rather
+          # than a way to silently discard the analysis.
+          echo "consensus_b64=$(base64 -w0 /tmp/result.json)" >> "$GITHUB_OUTPUT"
 
-      - name: Update scan in QNAP
-        if: inputs.scan_id != ''
+      # Result is also exposed as an artifact so an operator can retrieve the
+      # consensus output from a run directly.
+      - name: Upload consensus result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: consensus-result-${{ inputs.scan_id || github.run_id }}
+          path: /tmp/result.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Update scan in ingest API
+        if: inputs.scan_id != '' && inputs.post_to_api
         env:
           API_KEY: ${{ secrets.IRONCITY_API_KEY }}
+          API_URL: ${{ inputs.api_url }}
+          SCAN_ID: ${{ inputs.scan_id }}
         run: |
-          # Build update payload
-          jq --arg sid "${{ inputs.scan_id }}" \
+          set -euo pipefail
+          # IRONCITY_API_KEY is optional; without it, skip the post rather than
+          # failing the run on an inevitable auth rejection.
+          if [ -z "${API_KEY:-}" ]; then
+            echo "::warning::IRONCITY_API_KEY not set — skipping ingest API update"
+            exit 0
+          fi
+          # scan_id via --arg (env), never interpolated into the jq program.
+          jq --arg sid "$SCAN_ID" \
              '{scan_id: $sid, ai_consensus: .}' /tmp/result.json > /tmp/update.json
-          
-          curl -s -X POST "${{ inputs.api_url }}" \
+
+          # -s hid transport errors; check the HTTP code so a rejected update is
+          # a real failure rather than a silent success.
+          HTTP_CODE=$(curl -sS -o /tmp/ingest-response.txt -w '%{http_code}' -X POST "$API_URL" \
             -H "Content-Type: application/json" \
             -H "X-API-Key: $API_KEY" \
-            -d @/tmp/update.json
-          
-          echo "✅ AI consensus posted to QNAP"
+            -d @/tmp/update.json)
+          echo "Ingest API responded HTTP $HTTP_CODE"
+          cat /tmp/ingest-response.txt || true
+          case "$HTTP_CODE" in
+            2*) echo "AI consensus posted to ingest API" ;;
+            *)  echo "::error::ingest API update rejected (HTTP $HTTP_CODE)"; exit 1 ;;
+          esac
+
+      - name: Note result delivery
+        if: inputs.scan_id == '' || !inputs.post_to_api
+        run: |
+          echo "Ingest-API POST skipped; consensus returned to caller via consensus_b64."
