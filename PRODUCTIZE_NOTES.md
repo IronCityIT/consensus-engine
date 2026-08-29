@@ -49,3 +49,27 @@ is not a code fault and cannot be fixed from here; it needs a new key minted in
 the Google Cloud console. Gemini coverage is not lost in the meantime, because
 `google/gemini-2.5-flash` reaches the same family through OpenRouter. That one
 model is the 15th, and the only one still failing.
+
+### Credential leak in the result JSON (found by the first green self-test)
+
+The self-test run went green but GitHub annotated it:
+
+> Skip output 'consensus_b64' since it may contain secret.
+
+That was not a false positive. Gemini authenticates by **query parameter**, so a
+failed request raises with the API key sitting in the URL, and `requests` puts
+that whole URL in the exception string. The string went straight into
+`ModelResponse.error`, which is serialised into the consensus result — so
+`GEMINI_API_KEY` appeared verbatim 4 times in the output that gets uploaded as a
+30-day artifact, POSTed to the ingest API, and rendered on the client-facing
+dashboard.
+
+It also broke the delivery path this same PR had just added: GitHub refuses to
+emit a job output containing a masked secret, so `consensus_b64` was being
+dropped and every caller would have received an empty string.
+
+Fixed with a `_redact()` helper applied inside `_error_response()` — the single
+point every provider error passes through. It replaces the three held keys by
+value and additionally regex-strips any `?key=`/`&key=` parameter, so a provider
+echoing back a credential we do not hold is caught too. Verified: 0 occurrences
+of key material in the result, 14/15 models, `consensus_b64` populated.
