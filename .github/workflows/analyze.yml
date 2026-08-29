@@ -41,11 +41,14 @@ on:
         default: 'https://api.ironcityit.com/ingest'
       post_to_api:
         description: >-
-          POST the consensus result to the ingest API. Default true preserves
-          existing caller behaviour. Set false when the caller stores the
-          result itself and the data must not leave the Firestore path.
+          POST the consensus result to the legacy QNAP ingest API. Defaults to
+          false: the ICIT standard sink is storeScanResults -> Firestore, and
+          the caller stores the result itself from consensus_b64. The ingest API
+          is UPDATE-ONLY -- it 404s ("Scan <id> not found") for any scan that
+          was not created in QNAP first, which is every Firestore-path product.
+          Set true only for a caller that really does own a QNAP scan record.
         type: boolean
-        default: true
+        default: false
     outputs:
       consensus_b64:
         description: 'Base64-encoded consensus result JSON (empty if analysis failed)'
@@ -87,7 +90,7 @@ on:
         type: string
         default: 'https://api.ironcityit.com/ingest'
       post_to_api:
-        description: 'POST the consensus result to the ingest API'
+        description: 'POST the consensus result to the legacy QNAP ingest API'
         type: boolean
         default: false
 

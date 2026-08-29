@@ -73,3 +73,22 @@ point every provider error passes through. It replaces the three held keys by
 value and additionally regex-strips any `?key=`/`&key=` parameter, so a provider
 echoing back a credential we do not hold is caught too. Verified: 0 occurrences
 of key material in the result, 14/15 models, `consensus_b64` populated.
+
+### `post_to_api` now defaults to false (the ingest API is update-only)
+
+The threat-inspector e2e failed with `ingest API update rejected (HTTP 404)`.
+Probed with the real `IRONCITY_API_KEY`:
+
+```
+POST https://api.ironcityit.com/ingest  ->  404 {"error":"Scan probe not found"}
+```
+
+The endpoint is alive and the key authenticates — it 404s because it is an
+**update** endpoint for a scan record that must already exist in QNAP. Every
+product on the Firestore path creates its scan through `storeScanResults`, never
+in QNAP, so that POST can only ever 404 for them.
+
+The default is therefore `false`, which is also what the ICIT standard
+architecture already says: the sink is `storeScanResults -> Firestore`, and the
+caller stores the analysis itself from `consensus_b64`. A caller that genuinely
+owns a QNAP scan record opts back in with `post_to_api: true`.
