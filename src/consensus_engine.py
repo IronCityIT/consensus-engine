@@ -244,8 +244,29 @@ Respond with JSON only."""
 # API QUERY FUNCTIONS
 # =============================================================================
 
+def _redact(text: str) -> str:
+    """
+    Strip credentials out of a provider error string.
+
+    Gemini authenticates by query parameter, so a failed request raises with the
+    API key sitting in the URL. That string ends up in ModelResponse.error, which
+    is serialised into the consensus result -- an artifact, the ingest POST, and
+    ultimately the client-facing dashboard. Redact here, at the one place every
+    error passes through, rather than at each call site.
+    """
+    out = str(text)
+    for secret in (GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY):
+        if secret:
+            out = out.replace(secret, "***REDACTED***")
+    # Belt and braces: catch a key-shaped query parameter even if it is not one
+    # of the three we hold (a provider may echo back its own).
+    out = re.sub(r"([?&]key=)[^&\s]+", r"\1***REDACTED***", out)
+    return out
+
+
 def _error_response(model_name: str, provider: str, error: str) -> ModelResponse:
     """Create an error response."""
+    error = _redact(error)
     return ModelResponse(
         model_name=model_name,
         provider=provider,
