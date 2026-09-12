@@ -121,6 +121,16 @@ print(f"Remediation: {result.aggregated_remediation}")
 
 ## 📊 Output Format
 
+One object per finding. A batch of findings yields a JSON **array** of these,
+in the order the findings were given — a single finding yields the bare
+object. Results carry nothing that names their finding; callers match by
+position.
+
+The `consensus_b64` workflow output carries this shape **without
+`model_responses`**: a job output is capped at 1 MB and the transcripts are
+most of the size. The full result, transcripts included, is the
+`consensus-result-<run id>` artifact.
+
 ```json
 {
   "consensus_severity": "HIGH",

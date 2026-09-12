@@ -162,7 +162,19 @@ jobs:
           # Handed back to the caller so it can store the result on its own
           # path. This is what makes the Firestore route a real option rather
           # than a way to silently discard the analysis.
-          echo "consensus_b64=$(base64 -w0 /tmp/result.json)" >> "$GITHUB_OUTPUT"
+          #
+          # Without the raw model transcripts. A job output is capped at 1 MB
+          # and `model_responses` is ~25 KB per finding — fifteen models'
+          # full replies — so a caller sending more than ~20 findings got the
+          # analysis done, paid for, and then thrown away at "Job outputs
+          # exceed 1,048,576 bytes" (ironclad-compliance runs 34722216087 and
+          # 34723682288: 57 and 25 findings, 1.7 MB and 0.9 MB). The consensus
+          # itself is ~3 KB per finding. The transcripts stay in the artifact
+          # below, which has no such cap; no caller reads them from the
+          # output, and DNSGuard strips them on receipt as vendor-naming.
+          jq 'if type == "array" then map(del(.model_responses)) else del(.model_responses) end' \
+            /tmp/result.json > /tmp/result-consensus.json
+          echo "consensus_b64=$(base64 -w0 /tmp/result-consensus.json)" >> "$GITHUB_OUTPUT"
 
       # Result is also exposed as an artifact so an operator can retrieve the
       # consensus output from a run directly.
